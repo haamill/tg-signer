@@ -257,6 +257,9 @@ tg-signer monitor run my_monitor
 13. 请输入Http地址（形如`http://127.0.0.1:1234`）: http://127.0.0.1:8000/tg/user1/messages
 继续配置？(y/N)：n
 
+关于API
+base_url  	https://api.deepseek.com/v1
+model      deepseek-chat or deepseek-reasoner
 ```
 
 #### 示例解释：
