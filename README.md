@@ -114,7 +114,14 @@ tg-signer webgui --auth-code averycomplexcode  # 启动一个WebGUI
 例如：
 
 ```sh
-export TG_PROXY=socks5://127.0.0.1:7890
+export TG_PROXY=socks5://127.0.0.1:7890 #linux
+tg-signer --proxy http://127.0.0.1:7890 #https://127.0.0.1:7890
+$env:TG_PROXY="http://127.0.0.1:7890"
+```
+也有可能是
+```
+$env:HTTP_PROXY="http://127.0.0.1:7890"
+$env:HTTPS_PROXY="http://127.0.0.1:7890"
 ```
 
 ### 登录
