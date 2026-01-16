@@ -1,5 +1,5 @@
 import time
-from unittest.mock import MagicMock
+from collections import defaultdict
 
 import pytest
 
@@ -18,7 +18,7 @@ class TestRateLimit:
             workdir="/tmp/test_monitor"
         )
         monitor.context = UserMonitorContext(
-            last_message_times={},
+            last_message_times=defaultdict(float),
             global_last_message_time=None,
         )
         return monitor
