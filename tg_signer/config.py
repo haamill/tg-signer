@@ -370,6 +370,9 @@ class MatchConfig(BaseJSONConfig):
     )
     push_via_server_chan: bool = False  # 将消息通过server酱推送
     server_chan_send_key: Optional[str] = None  # server酱的sendkey
+    rate_limit_enabled: bool = False  # 启用发言频率限制
+    rate_limit_seconds: int = 60  # 发言频率限制的最小间隔秒数
+    rate_limit_per_chat: bool = True  # 按聊天分别限制（True）还是全局限制（False）
 
     def __str__(self):
         return (

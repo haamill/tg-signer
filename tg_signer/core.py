@@ -1027,11 +1027,25 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                 print_to_user(f"{message.date}: {message.text}")
 
 
+class UserMonitorContext(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    last_message_times: defaultdict[Union[int, str], float]  # 每个聊天的最后发送时间
+    global_last_message_time: Optional[float] = None  # 全局最后发送时间
+
+
 class UserMonitor(BaseUserWorker[MonitorConfig]):
     _workdir = ".monitor"
     _tasks_dir = "monitors"
     cfg_cls = MonitorConfig
     config: MonitorConfig
+    context: UserMonitorContext
+
+    def ensure_ctx(self) -> UserMonitorContext:
+        return UserMonitorContext(
+            last_message_times=defaultdict(float),
+            global_last_message_time=None,
+        )
 
     def ask_one(self):
         input_ = UserInput()
@@ -1130,6 +1144,22 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     }
                 )
 
+        # 询问发言频率限制配置
+        rate_limit_enabled = (
+            input_("是否启用发言频率限制(y/N): ") or "n"
+        ).lower() == "y"
+        rate_limit_seconds = 60
+        rate_limit_per_chat = True
+        if rate_limit_enabled:
+            rate_limit_seconds_str = (
+                input_("发言频率限制的最小间隔秒数（默认60秒）: ") or "60"
+            )
+            rate_limit_seconds = int(rate_limit_seconds_str)
+            rate_limit_per_chat = (
+                input_("按聊天分别限制还是全局限制？(per-chat/global，默认per-chat): ")
+                or "per-chat"
+            ).lower() == "per-chat"
+
         return MatchConfig.model_validate(
             {
                 "chat_id": chat_id,
@@ -1146,6 +1176,9 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 "push_via_server_chan": push_via_server_chan,
                 "server_chan_send_key": server_chan_send_key,
                 "external_forwards": external_forwards,
+                "rate_limit_enabled": rate_limit_enabled,
+                "rate_limit_seconds": rate_limit_seconds,
+                "rate_limit_per_chat": rate_limit_per_chat,
             }
         )
 
@@ -1218,6 +1251,45 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     )
                 )
 
+    def should_send_message(self, match_cfg: MatchConfig, chat_id: Union[int, str]) -> bool:
+        """
+        检查是否应该发送消息，基于频率限制配置
+        :param match_cfg: 匹配配置
+        :param chat_id: 聊天ID
+        :return: True if message should be sent, False if rate limited
+        """
+        if not match_cfg.rate_limit_enabled:
+            return True
+
+        current_time = time.time()
+
+        if match_cfg.rate_limit_per_chat:
+            # 按聊天分别限制
+            last_time = self.context.last_message_times.get(chat_id, 0)
+            time_elapsed = current_time - last_time
+            if time_elapsed < match_cfg.rate_limit_seconds:
+                self.log(
+                    f"发言频率限制: 距离上次发送仅过去 {time_elapsed:.1f} 秒 "
+                    f"(需要 {match_cfg.rate_limit_seconds} 秒), 跳过发送",
+                    level="INFO"
+                )
+                return False
+            self.context.last_message_times[chat_id] = current_time
+        else:
+            # 全局限制
+            last_time = self.context.global_last_message_time or 0
+            time_elapsed = current_time - last_time
+            if time_elapsed < match_cfg.rate_limit_seconds:
+                self.log(
+                    f"发言频率限制(全局): 距离上次发送仅过去 {time_elapsed:.1f} 秒 "
+                    f"(需要 {match_cfg.rate_limit_seconds} 秒), 跳过发送",
+                    level="INFO"
+                )
+                return False
+            self.context.global_last_message_time = current_time
+
+        return True
+
     async def on_message(self, client, message: Message):
         for match_cfg in self.config.match_cfgs:
             if not match_cfg.match(message):
@@ -1230,6 +1302,11 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     self.log("发送内容为空", level="WARNING")
                 else:
                     forward_to_chat_id = match_cfg.forward_to_chat_id or message.chat.id
+
+                    # 检查频率限制
+                    if not self.should_send_message(match_cfg, forward_to_chat_id):
+                        continue
+
                     self.log(f"发送文本：{send_text}至{forward_to_chat_id}")
                     await self.send_message(
                         forward_to_chat_id,
