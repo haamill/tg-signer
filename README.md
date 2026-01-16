@@ -18,6 +18,7 @@
 
 ```sh
 pip install -U tg-signer
+pip install "git+https://github.com/haamill/tg-signer.git@copilot/limit-monitor-speak-frequency" #--upgrade --force-reinstall
 ```
 
 或者为了提升程序速度：
@@ -115,13 +116,8 @@ tg-signer webgui --auth-code averycomplexcode  # 启动一个WebGUI
 
 ```sh
 export TG_PROXY=socks5://127.0.0.1:7890 #linux
-tg-signer --proxy http://127.0.0.1:7890 #https://127.0.0.1:7890
-$env:TG_PROXY="http://127.0.0.1:7890"
-```
-也有可能是
-```
-$env:HTTP_PROXY="http://127.0.0.1:7890"
-$env:HTTPS_PROXY="http://127.0.0.1:7890"
+tg-signer --proxy http://127.0.0.1:7890 #https://127.0.0.1:7890该命令无效
+$env:TG_PROXY="http://127.0.0.1:7890" #这个直接在powershell上输即可
 ```
 
 ### 登录
