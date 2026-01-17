@@ -1032,6 +1032,8 @@ class UserMonitorContext(BaseModel):
 
     last_message_times: defaultdict[Union[int, str], float]  # 每个聊天的最后发送时间
     global_last_message_time: Optional[float] = None  # 全局最后发送时间
+    daily_message_count: int = 0  # 今日发送消息数量
+    last_checkin_date: Optional[str] = None  # 最后签到日期 (YYYY-MM-DD格式)
 
 
 class UserMonitor(BaseUserWorker[MonitorConfig]):
@@ -1045,6 +1047,8 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         return UserMonitorContext(
             last_message_times=defaultdict(float),
             global_last_message_time=None,
+            daily_message_count=0,
+            last_checkin_date=None,
         )
 
     def ask_one(self):
@@ -1160,6 +1164,20 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 or "per-chat"
             ).lower() == "per-chat"
 
+        # 询问发送延迟配置
+        send_delay_seconds_str = (
+            input_("发送消息前的延迟秒数（默认1秒）: ") or "1"
+        )
+        send_delay_seconds = int(send_delay_seconds_str)
+
+        # 询问AI上下文消息数量
+        context_messages_count = 5
+        if ai_reply:
+            context_messages_count_str = (
+                input_("AI回复时获取的上下文消息数量（默认5条）: ") or "5"
+            )
+            context_messages_count = int(context_messages_count_str)
+
         return MatchConfig.model_validate(
             {
                 "chat_id": chat_id,
@@ -1179,6 +1197,8 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 "rate_limit_enabled": rate_limit_enabled,
                 "rate_limit_seconds": rate_limit_seconds,
                 "rate_limit_per_chat": rate_limit_per_chat,
+                "send_delay_seconds": send_delay_seconds,
+                "context_messages_count": context_messages_count,
             }
         )
 
@@ -1201,7 +1221,30 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
             if continue_.strip().lower() != "y":
                 break
             i += 1
-        config = MonitorConfig(match_cfgs=match_cfgs)
+
+        # 询问每日签到配置
+        input_ = UserInput()
+        daily_checkin_enabled = (
+            input_("\n是否启用每日签到功能(y/N): ") or "n"
+        ).lower() == "y"
+        daily_checkin_text = "签到"
+        if daily_checkin_enabled:
+            daily_checkin_text = (
+                input_("每日签到文本（默认为'签到'）: ") or "签到"
+            )
+
+        # 询问每日消息限制
+        daily_message_limit_str = (
+            input_("每日发送消息数量限制（默认200条，0表示不限制）: ") or "200"
+        )
+        daily_message_limit = int(daily_message_limit_str)
+
+        config = MonitorConfig(
+            match_cfgs=match_cfgs,
+            daily_checkin_enabled=daily_checkin_enabled,
+            daily_checkin_text=daily_checkin_text,
+            daily_message_limit=daily_message_limit,
+        )
         if config.requires_ai:
             print_to_user(OPENAI_USE_PROMPT)
         return config
@@ -1290,7 +1333,79 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
 
         return True
 
+    def check_and_reset_daily_count(self):
+        """检查并重置每日消息计数"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self.context.last_checkin_date != today:
+            self.context.daily_message_count = 0
+            self.context.last_checkin_date = today
+            return True  # 新的一天
+        return False
+
+    def can_send_today(self) -> bool:
+        """检查今日是否还能发送消息"""
+        if self.config.daily_message_limit <= 0:
+            return True  # 未设置限制
+        return self.context.daily_message_count < self.config.daily_message_limit
+
+    def increment_daily_count(self):
+        """增加今日消息计数"""
+        self.context.daily_message_count += 1
+
+    async def get_context_messages(
+        self, chat_id: Union[int, str], message_id: int, count: int = 5
+    ) -> List[Message]:
+        """
+        获取指定消息之前的上下文消息
+        :param chat_id: 聊天ID
+        :param message_id: 当前消息ID
+        :param count: 获取的消息数量（之前count条）
+        :return: 消息列表
+        """
+        try:
+            # 获取当前消息之前的消息
+            before_messages = []
+            async for msg in self.app.get_chat_history(chat_id, limit=count + 1):
+                if msg.id >= message_id:
+                    continue
+                if msg.text:  # 只获取文本消息
+                    before_messages.append(msg)
+                if len(before_messages) >= count:
+                    break
+
+            # 这里我们只获取之前的消息，因为之后的消息在处理当前消息时可能还没有发送
+
+            return list(reversed(before_messages))  # 按时间顺序返回
+        except Exception as e:
+            self.log(f"获取上下文消息失败: {e}", level="WARNING")
+            return []
+
+    async def perform_daily_checkin(self):
+        """执行每日签到"""
+        if not self.config.daily_checkin_enabled:
+            return
+
+        is_new_day = self.check_and_reset_daily_count()
+        if not is_new_day:
+            return  # 今天已经签到过了
+
+        checkin_text = self.config.daily_checkin_text or "签到"
+        self.log(f"执行每日签到，发送文本: {checkin_text}")
+
+        # 向所有监控的聊天发送签到消息
+        for chat_id in self.config.chat_ids:
+            try:
+                await self.send_message(chat_id, checkin_text)
+                self.increment_daily_count()
+                self.log(f"已向 {chat_id} 发送签到消息")
+            except Exception as e:
+                self.log(f"向 {chat_id} 发送签到消息失败: {e}", level="ERROR")
+
     async def on_message(self, client, message: Message):
+        # 检查并重置每日计数，如果是新的一天则执行签到
+        if self.check_and_reset_daily_count():
+            await self.perform_daily_checkin()
+
         for match_cfg in self.config.match_cfgs:
             if not match_cfg.match(message):
                 continue
@@ -1307,12 +1422,29 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     if not self.should_send_message(match_cfg, forward_to_chat_id):
                         continue
 
+                    # 检查每日消息数量限制
+                    if not self.can_send_today():
+                        self.log(
+                            f"已达到每日消息数量限制 ({self.config.daily_message_limit})，跳过发送",
+                            level="INFO"
+                        )
+                        continue
+
+                    # 添加发送延迟
+                    if match_cfg.send_delay_seconds > 0:
+                        self.log(f"延迟 {match_cfg.send_delay_seconds} 秒后发送")
+                        await asyncio.sleep(match_cfg.send_delay_seconds)
+
                     self.log(f"发送文本：{send_text}至{forward_to_chat_id}")
                     await self.send_message(
                         forward_to_chat_id,
                         send_text,
                         delete_after=match_cfg.delete_after,
                     )
+
+                    # 增加今日消息计数
+                    self.increment_daily_count()
+                    self.log(f"今日已发送 {self.context.daily_message_count} 条消息")
 
                 if match_cfg.push_via_server_chan:
                     server_chan_send_key = (
@@ -1333,9 +1465,28 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
     async def get_send_text(self, match_cfg: MatchConfig, message: Message) -> str:
         send_text = match_cfg.get_send_text(message.text)
         if match_cfg.ai_reply and match_cfg.ai_prompt:
+            # 获取上下文消息
+            context_messages = []
+            if match_cfg.context_messages_count > 0:
+                context_messages = await self.get_context_messages(
+                    message.chat.id,
+                    message.id,
+                    match_cfg.context_messages_count
+                )
+
+            # 构建包含上下文的查询文本
+            query_text = message.text
+            if context_messages:
+                context_text = "\n".join([
+                    f"[{msg.from_user.username or msg.from_user.id if msg.from_user else 'Unknown'}]: {msg.text}"
+                    for msg in context_messages
+                ])
+                query_text = f"上下文消息:\n{context_text}\n\n当前消息:\n{message.text}"
+                self.log(f"包含 {len(context_messages)} 条上下文消息进行AI分析")
+
             send_text = await self.get_ai_tools().get_reply(
                 match_cfg.ai_prompt,
-                message.text,
+                query_text,
             )
         return send_text
 
@@ -1352,6 +1503,9 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         )
         async with self.app:
             self.log("开始监控...")
+            # 启动时执行一次每日签到检查
+            if self.check_and_reset_daily_count():
+                await self.perform_daily_checkin()
             await idle()
 
 
