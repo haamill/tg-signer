@@ -373,6 +373,8 @@ class MatchConfig(BaseJSONConfig):
     rate_limit_enabled: bool = False  # 启用发言频率限制
     rate_limit_seconds: int = 60  # 发言频率限制的最小间隔秒数
     rate_limit_per_chat: bool = True  # 按聊天分别限制（True）还是全局限制（False）
+    send_delay_seconds: int = 1  # 发送消息前的延迟秒数
+    context_messages_count: int = 5  # AI回复时获取的上下文消息数量
 
     def __str__(self):
         return (
@@ -464,6 +466,9 @@ class MonitorConfig(BaseJSONConfig):
     version: ClassVar = 1
     is_current: ClassVar = True
     match_cfgs: List[MatchConfig]
+    daily_checkin_enabled: bool = False  # 每日签到功能开关
+    daily_checkin_text: str = "签到"  # 每日签到文本
+    daily_message_limit: int = 200  # 每日发送消息数量限制
 
     @property
     def chat_ids(self):
