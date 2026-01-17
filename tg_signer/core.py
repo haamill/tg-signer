@@ -1163,13 +1163,13 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 input_("按聊天分别限制还是全局限制？(per-chat/global，默认per-chat): ")
                 or "per-chat"
             ).lower() == "per-chat"
-        
+
         # 询问发送延迟配置
         send_delay_seconds_str = (
             input_("发送消息前的延迟秒数（默认1秒）: ") or "1"
         )
         send_delay_seconds = int(send_delay_seconds_str)
-        
+
         # 询问AI上下文消息数量
         context_messages_count = 5
         if ai_reply:
@@ -1221,7 +1221,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
             if continue_.strip().lower() != "y":
                 break
             i += 1
-        
+
         # 询问每日签到配置
         input_ = UserInput()
         daily_checkin_enabled = (
@@ -1232,13 +1232,13 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
             daily_checkin_text = (
                 input_("每日签到文本（默认为'签到'）: ") or "签到"
             )
-        
+
         # 询问每日消息限制
         daily_message_limit_str = (
             input_("每日发送消息数量限制（默认200条，0表示不限制）: ") or "200"
         )
         daily_message_limit = int(daily_message_limit_str)
-        
+
         config = MonitorConfig(
             match_cfgs=match_cfgs,
             daily_checkin_enabled=daily_checkin_enabled,
@@ -1374,10 +1374,9 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     break
 
             # 获取当前消息之后的消息（需要从更早的消息开始）
-            after_messages = []
             # 由于Telegram API的限制，我们需要从消息ID之后开始获取
             # 这里我们只获取之前的消息，因为之后的消息可能还没有发送
-            
+
             return list(reversed(before_messages))  # 按时间顺序返回
         except Exception as e:
             self.log(f"获取上下文消息失败: {e}", level="WARNING")
@@ -1387,14 +1386,14 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         """执行每日签到"""
         if not self.config.daily_checkin_enabled:
             return
-        
+
         is_new_day = self.check_and_reset_daily_count()
         if not is_new_day:
             return  # 今天已经签到过了
-        
+
         checkin_text = self.config.daily_checkin_text or "签到"
         self.log(f"执行每日签到，发送文本: {checkin_text}")
-        
+
         # 向所有监控的聊天发送签到消息
         for chat_id in self.config.chat_ids:
             try:
@@ -1408,7 +1407,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         # 检查并重置每日计数，如果是新的一天则执行签到
         if self.check_and_reset_daily_count():
             await self.perform_daily_checkin()
-        
+
         for match_cfg in self.config.match_cfgs:
             if not match_cfg.match(message):
                 continue
@@ -1424,7 +1423,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     # 检查频率限制
                     if not self.should_send_message(match_cfg, forward_to_chat_id):
                         continue
-                    
+
                     # 检查每日消息数量限制
                     if not self.can_send_today():
                         self.log(
@@ -1444,7 +1443,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                         send_text,
                         delete_after=match_cfg.delete_after,
                     )
-                    
+
                     # 增加今日消息计数
                     self.increment_daily_count()
                     self.log(f"今日已发送 {self.context.daily_message_count} 条消息")
@@ -1472,11 +1471,11 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
             context_messages = []
             if match_cfg.context_messages_count > 0:
                 context_messages = await self.get_context_messages(
-                    message.chat.id, 
-                    message.id, 
+                    message.chat.id,
+                    message.id,
                     match_cfg.context_messages_count
                 )
-            
+
             # 构建包含上下文的查询文本
             query_text = message.text
             if context_messages:
@@ -1486,7 +1485,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 ])
                 query_text = f"上下文消息:\n{context_text}\n\n当前消息:\n{message.text}"
                 self.log(f"包含 {len(context_messages)} 条上下文消息进行AI分析")
-            
+
             send_text = await self.get_ai_tools().get_reply(
                 match_cfg.ai_prompt,
                 query_text,
