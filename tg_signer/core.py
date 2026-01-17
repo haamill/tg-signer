@@ -1356,10 +1356,10 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         self, chat_id: Union[int, str], message_id: int, count: int = 5
     ) -> List[Message]:
         """
-        获取指定消息前后的上下文消息
+        获取指定消息之前的上下文消息
         :param chat_id: 聊天ID
         :param message_id: 当前消息ID
-        :param count: 获取的消息数量（前后各count条）
+        :param count: 获取的消息数量（之前count条）
         :return: 消息列表
         """
         try:
@@ -1373,9 +1373,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                 if len(before_messages) >= count:
                     break
 
-            # 获取当前消息之后的消息（需要从更早的消息开始）
-            # 由于Telegram API的限制，我们需要从消息ID之后开始获取
-            # 这里我们只获取之前的消息，因为之后的消息可能还没有发送
+            # 这里我们只获取之前的消息，因为之后的消息在处理当前消息时可能还没有发送
 
             return list(reversed(before_messages))  # 按时间顺序返回
         except Exception as e:
@@ -1480,7 +1478,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
             query_text = message.text
             if context_messages:
                 context_text = "\n".join([
-                    f"[{msg.from_user.username or msg.from_user.id}]: {msg.text}"
+                    f"[{msg.from_user.username or msg.from_user.id if msg.from_user else 'Unknown'}]: {msg.text}"
                     for msg in context_messages
                 ])
                 query_text = f"上下文消息:\n{context_text}\n\n当前消息:\n{message.text}"

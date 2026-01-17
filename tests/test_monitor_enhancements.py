@@ -11,11 +11,11 @@ class TestMonitorEnhancements:
     """测试监控增强功能"""
 
     @pytest.fixture
-    def monitor(self):
+    def monitor(self, tmp_path):
         """创建一个UserMonitor实例用于测试"""
         monitor = UserMonitor(
             task_name="test_monitor",
-            workdir="/tmp/test_monitor_enhancements"
+            workdir=tmp_path / "test_monitor_enhancements"
         )
         monitor.config = MonitorConfig(
             match_cfgs=[],
