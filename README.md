@@ -14,6 +14,12 @@
 
 ### 安装
 
+```sh
+export TG_PROXY=socks5://127.0.0.1:7890 #linux
+tg-signer --proxy http://127.0.0.1:7890 #https://127.0.0.1:7890该命令无效
+$env:TG_PROXY="http://127.0.0.1:7890" #这个直接在powershell上输即可
+```
+
 需要Python3.10及以上
 
 ```sh
@@ -118,6 +124,7 @@ tg-signer webgui --auth-code averycomplexcode  # 启动一个WebGUI
 export TG_PROXY=socks5://127.0.0.1:7890 #linux
 tg-signer --proxy http://127.0.0.1:7890 #https://127.0.0.1:7890该命令无效
 $env:TG_PROXY="http://127.0.0.1:7890" #这个直接在powershell上输即可
+$Env:http_proxy="http://127.0.0.1:7890";$Env:https_proxy="http://127.0.0.1:7890"#让powershell走代理，但这好像没啥用
 ```
 
 ### 登录
