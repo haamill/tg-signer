@@ -1032,8 +1032,9 @@ class UserMonitorContext(BaseModel):
 
     last_message_times: defaultdict[Union[int, str], float]  # 每个聊天的最后发送时间
     global_last_message_time: Optional[float] = None  # 全局最后发送时间
-    daily_message_count: int = 0  # 今日发送消息数量
+    daily_message_count: defaultdict[Union[int, str], int]  # 每个聊天今日发送消息数量
     last_checkin_date: Optional[str] = None  # 最后签到日期 (YYYY-MM-DD格式)
+    stopped_chats: set[Union[int, str]]  # 已停止监控的聊天（达到消息限制）
 
 
 class UserMonitor(BaseUserWorker[MonitorConfig]):
@@ -1047,8 +1048,9 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         return UserMonitorContext(
             last_message_times=defaultdict(float),
             global_last_message_time=None,
-            daily_message_count=0,
+            daily_message_count=defaultdict(int),
             last_checkin_date=None,
+            stopped_chats=set(),
         )
 
     def ask_one(self):
@@ -1337,20 +1339,26 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         """检查并重置每日消息计数"""
         today = datetime.now().strftime("%Y-%m-%d")
         if self.context.last_checkin_date != today:
-            self.context.daily_message_count = 0
+            self.context.daily_message_count.clear()
+            self.context.stopped_chats.clear()
             self.context.last_checkin_date = today
             return True  # 新的一天
         return False
 
-    def can_send_today(self) -> bool:
-        """检查今日是否还能发送消息"""
+    def can_send_today(self, chat_id: Union[int, str]) -> bool:
+        """检查今日该聊天是否还能发送消息"""
         if self.config.daily_message_limit <= 0:
             return True  # 未设置限制
-        return self.context.daily_message_count < self.config.daily_message_limit
+        return self.context.daily_message_count[chat_id] < self.config.daily_message_limit
 
-    def increment_daily_count(self):
-        """增加今日消息计数"""
-        self.context.daily_message_count += 1
+    def increment_daily_count(self, chat_id: Union[int, str]):
+        """增加今日该聊天的消息计数"""
+        self.context.daily_message_count[chat_id] += 1
+        # 检查是否达到限制
+        if (self.config.daily_message_limit > 0 and 
+            self.context.daily_message_count[chat_id] >= self.config.daily_message_limit):
+            self.context.stopped_chats.add(chat_id)
+            self.log(f"聊天 {chat_id} 已达到每日消息限制 ({self.config.daily_message_limit})，停止监控以节省资源", level="INFO")
 
     async def get_context_messages(
         self, chat_id: Union[int, str], message_id: int, count: int = 5
@@ -1385,10 +1393,6 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         if not self.config.daily_checkin_enabled:
             return
 
-        is_new_day = self.check_and_reset_daily_count()
-        if not is_new_day:
-            return  # 今天已经签到过了
-
         checkin_text = self.config.daily_checkin_text or "签到"
         self.log(f"执行每日签到，发送文本: {checkin_text}")
 
@@ -1396,7 +1400,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         for chat_id in self.config.chat_ids:
             try:
                 await self.send_message(chat_id, checkin_text)
-                self.increment_daily_count()
+                self.increment_daily_count(chat_id)
                 self.log(f"已向 {chat_id} 发送签到消息")
             except Exception as e:
                 self.log(f"向 {chat_id} 发送签到消息失败: {e}", level="ERROR")
@@ -1405,6 +1409,10 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         # 检查并重置每日计数，如果是新的一天则执行签到
         if self.check_and_reset_daily_count():
             await self.perform_daily_checkin()
+
+        # 检查该聊天是否已停止监控
+        if message.chat.id in self.context.stopped_chats:
+            return
 
         for match_cfg in self.config.match_cfgs:
             if not match_cfg.match(message):
@@ -1422,10 +1430,10 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                     if not self.should_send_message(match_cfg, forward_to_chat_id):
                         continue
 
-                    # 检查每日消息数量限制
-                    if not self.can_send_today():
+                    # 检查每日消息数量限制（针对目标聊天）
+                    if not self.can_send_today(forward_to_chat_id):
                         self.log(
-                            f"已达到每日消息数量限制 ({self.config.daily_message_limit})，跳过发送",
+                            f"聊天 {forward_to_chat_id} 已达到每日消息数量限制 ({self.config.daily_message_limit})，跳过发送",
                             level="INFO"
                         )
                         continue
@@ -1442,9 +1450,9 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                         delete_after=match_cfg.delete_after,
                     )
 
-                    # 增加今日消息计数
-                    self.increment_daily_count()
-                    self.log(f"今日已发送 {self.context.daily_message_count} 条消息")
+                    # 增加今日该聊天的消息计数
+                    self.increment_daily_count(forward_to_chat_id)
+                    self.log(f"今日已向 {forward_to_chat_id} 发送 {self.context.daily_message_count[forward_to_chat_id]} 条消息")
 
                 if match_cfg.push_via_server_chan:
                     server_chan_send_key = (
