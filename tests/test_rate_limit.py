@@ -20,6 +20,9 @@ class TestRateLimit:
         monitor.context = UserMonitorContext(
             last_message_times=defaultdict(float),
             global_last_message_time=None,
+            daily_message_count=defaultdict(int),
+            last_checkin_date=None,
+            stopped_chats=set(),
         )
         return monitor
 
