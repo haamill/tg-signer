@@ -1355,7 +1355,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         """增加今日该聊天的消息计数"""
         self.context.daily_message_count[chat_id] += 1
         # 检查是否达到限制
-        if (self.config.daily_message_limit > 0 and 
+        if (self.config.daily_message_limit > 0 and
             self.context.daily_message_count[chat_id] >= self.config.daily_message_limit):
             self.context.stopped_chats.add(chat_id)
             self.log(f"聊天 {chat_id} 已达到每日消息限制 ({self.config.daily_message_limit})，停止监控以节省资源", level="INFO")
