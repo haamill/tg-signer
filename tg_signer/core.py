@@ -1397,11 +1397,14 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
         self.log(f"执行每日签到，发送文本: {checkin_text}")
 
         # 向所有监控的聊天发送签到消息
-        for chat_id in self.config.chat_ids:
+        for i, chat_id in enumerate(self.config.chat_ids):
             try:
                 await self.send_message(chat_id, checkin_text)
                 self.increment_daily_count(chat_id)
                 self.log(f"已向 {chat_id} 发送签到消息")
+                # 添加小延迟以避免潜在的速率限制
+                if i < len(self.config.chat_ids) - 1:  # 不在最后一个消息后等待
+                    await asyncio.sleep(1)
             except Exception as e:
                 self.log(f"向 {chat_id} 发送签到消息失败: {e}", level="ERROR")
 
